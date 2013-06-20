@@ -22,42 +22,44 @@ PN aio_vt, aio_tcp_vt, aio_udp_vt, aio_loop_vt, aio_tty_vt, aio_pipe_vt, aio_pol
   aio_udp_send_vt, aio_fs_vt, aio_work_vt, aio_getaddrinfo_vt, aio_cpu_info_vt, aio_interface_address_vt;
 
 //with wrapped callback
-#define DEF_AIO_CB_WRAP(T,H) \
-struct aio_##T##_s { \
-  struct uv_##H##_s r;   \
-  Potion *P;             \
-  PN cl;                 \
-  uv_##T##_cb cb;        \
-} aio_##T##_t
-//without
+#define DEF_AIO_WRAP(T,H)	\
+typedef struct aio_##T##_s aio_##T##_t; \
+struct aio_##T##_s {		\
+  Potion *P;			\
+  PN cl;			\
+  uv_##T##_cb cb;		\
+  uv_##H##_t data;		\
+}
 #define DEF_AIO_HANDLE_WRAP(T) \
-struct aio_##T##_s {     \
-  uv_##T##_t h;          \
-  Potion *P;             \
-  PN cl;                 \
-} aio_##T##_t
-DEF_AIO_CB_WRAP(write,write);
-DEF_AIO_CB_WRAP(connect,connect);
-DEF_AIO_CB_WRAP(shutdown,shutdown);
-DEF_AIO_CB_WRAP(connection,stream);
-DEF_AIO_CB_WRAP(close,handle);
-DEF_AIO_CB_WRAP(poll,poll);
-DEF_AIO_CB_WRAP(timer,timer);
-DEF_AIO_CB_WRAP(async,async);
-DEF_AIO_CB_WRAP(prepare,prepare);
-DEF_AIO_CB_WRAP(check,check);
-DEF_AIO_CB_WRAP(idle,idle);
-DEF_AIO_CB_WRAP(exit,process);
-DEF_AIO_CB_WRAP(walk,handle);
-DEF_AIO_CB_WRAP(fs,fs);
-DEF_AIO_CB_WRAP(work,work);
-DEF_AIO_CB_WRAP(after_work,work);
-DEF_AIO_CB_WRAP(getaddrinfo,getaddrinfo);
-DEF_AIO_CB_WRAP(fs_poll,fs_poll);
-DEF_AIO_CB_WRAP(signal,signal);
+typedef struct aio_##T##_s aio_##T##_t; \
+struct aio_##T##_s {	       \
+  Potion *P;		       \
+  PN cl;		       \
+  uv_work_cb cb;	       \
+  uv_##T##_t data;	       \
+}
+DEF_AIO_WRAP(write,write);
+DEF_AIO_WRAP(connect,connect);
+DEF_AIO_WRAP(shutdown,shutdown);
+DEF_AIO_WRAP(connection,stream);
+DEF_AIO_WRAP(close,handle);
+DEF_AIO_WRAP(poll,poll);
+DEF_AIO_WRAP(timer,timer);
+DEF_AIO_WRAP(async,async);
+DEF_AIO_WRAP(prepare,prepare);
+DEF_AIO_WRAP(check,check);
+DEF_AIO_WRAP(idle,idle);
+DEF_AIO_WRAP(exit,process);
+DEF_AIO_WRAP(walk,handle);
+DEF_AIO_WRAP(fs,fs);
+DEF_AIO_WRAP(work,work);
+DEF_AIO_WRAP(after_work,work);
+DEF_AIO_WRAP(getaddrinfo,getaddrinfo);
+DEF_AIO_WRAP(fs_poll,fs_poll);
+DEF_AIO_WRAP(signal,signal);
+DEF_AIO_WRAP(fs_event,fs_event);
 DEF_AIO_HANDLE_WRAP(handle);
 DEF_AIO_HANDLE_WRAP(loop);
-DEF_AIO_CB_WRAP(fs_event,fs_event);
 DEF_AIO_HANDLE_WRAP(pipe);
 DEF_AIO_HANDLE_WRAP(process);
 DEF_AIO_HANDLE_WRAP(stream);
@@ -73,7 +75,7 @@ DEF_AIO_HANDLE_WRAP(barrier);
 DEF_AIO_HANDLE_WRAP(cond);
 DEF_AIO_HANDLE_WRAP(mutex);
 DEF_AIO_HANDLE_WRAP(rwlock);
-#undef DEF_AIO_CB_WRAP
+#undef DEF_AIO_WRAP
 #undef DEF_AIO_HANDLE_WRAP
 
 /**\memberof aio_fs_event
@@ -86,22 +88,21 @@ static void
 aio_fs_event_cb(uv_fs_event_t* handle, const char* filename, int events, int status) {
   struct aio_fs_event_s* wrap = (struct aio_fs_event_s*)handle;
   vPN(Closure) cb = PN_CLOSURE(wrap->cb);
-  char *data = (char*)(&wrap - sizeof(struct PNData) + sizeof(char*));
-  if (cb) cb->method(wrap->P, wrap->cl, (PN)data, potion_str(wrap->P, filename),
+  if (cb) cb->method(wrap->P, wrap->cl, (PN)&wrap->data, potion_str(wrap->P, filename),
 		     PN_NUM(events), PN_NUM(status));
 }
 
 #define DEF_AIO_NEW_NOINIT(T)					      \
-  struct PNData *data = potion_data_alloc(P,			      \
-    sizeof(uv_##T##_t)+sizeof(Potion*)+sizeof(PN)+sizeof(void*));     \
+  struct PNData *data = potion_data_alloc(P, sizeof(aio_##T##_t));    \
+  aio_##T##_t *aio = (aio_##T##_t *)PN_DATA(data);		      \
   data->vt = aio_##T##_vt;					      \
-  ((struct aio_##T##_s*)data)->P = P;			              \
-  ((struct aio_##T##_s*)data)->cl = cl
+  aio->P = P;							      \
+  aio->cl = cl
 #define DEF_AIO_NEW(T)						      \
   int r;							      \
   uv_##T##_t *handle;						      \
   DEF_AIO_NEW_NOINIT(T);					      \
-  handle = (uv_##T##_t*)PN_DATA(data)
+  handle = &aio->data
 #define DEF_AIO_NEW_LOOP(T)					      \
   DEF_AIO_NEW(T);						      \
   if (!loop) loop = (PN)&uv_default_loop;			      \
@@ -120,12 +121,12 @@ static PN aio_tcp_new(Potion *P, PN cl, PN self, PN loop) {
   //DEF_AIO_NEW_LOOP(tcp);
   int r;
   uv_tcp_t *handle;
-  struct PNData *data = potion_data_alloc(P,
-    sizeof(uv_tcp_t)+sizeof(Potion*)+sizeof(PN)+sizeof(void*));
+  struct PNData *data = potion_data_alloc(P,sizeof(aio_tcp_t));
+  aio_tcp_t *aio = (aio_tcp_t *)PN_DATA(data);
   data->vt = aio_tcp_vt;
-  ((struct aio_tcp_s*)data)->P = P;
-  ((struct aio_tcp_s*)data)->cl = cl;
-  handle = (uv_tcp_t*)PN_DATA(data);
+  aio->P = P;
+  aio->cl = cl;
+  handle = &aio->data;
   if (!loop) loop = (PN)&uv_default_loop;
   else if (PN_TYPE(loop) == PN_TUSER) loop = (PN)PN_DATA(loop);
   else if (PN_TYPE(loop) == PN_TCLOSURE) loop = (PN)PN_CLOSURE_F(loop);
@@ -284,9 +285,9 @@ static PN aio_rwlock_new(Potion *P, PN cl, PN self) {
 
 //cb wrappers
 #define DEF_AIO_CB(T)				       \
-  struct aio_##T##_s* wrap = (struct aio_##T##_s*)req; \
+  aio_##T##_t* wrap = (aio_##T##_t*)req;	       \
   vPN(Closure) cb = PN_CLOSURE(wrap->cb);              \
-  char *data = (char*)(&wrap - sizeof(struct PNData) + sizeof(char*)); \
+  char *data = (char*)(&wrap - sizeof(aio_##T##_t));   \
   if (cb) cb->method(wrap->P, wrap->cl, (PN)data, PN_NUM(status))
 
 static void
@@ -507,12 +508,12 @@ aio_udp_recv_start(Potion *P, PN cl, PN udp, PN cb) {
   struct aio_udp_s *handle = (struct aio_udp_s*)PN_DATA(potion_fwd(udp));
   uv_udp_recv_cb recv_cb;
   if (PN_IS_CLOSURE(cb)) { //register user-callback. set cb ptr in req
-    handle->h.recv_cb = (uv_udp_recv_cb)PN_CLOSURE(cb);
+    handle->data.recv_cb = (uv_udp_recv_cb)PN_CLOSURE(cb);
     recv_cb = (uv_udp_recv_cb)NULL;//aio_udp_recv_cb;
   }
   else if (PN_IS_FFIPTR(cb)) recv_cb = (uv_udp_recv_cb)cb; //c-level cb loaded via ffi
   else recv_cb = 0; //none
-  int r = uv_udp_recv_start(&handle->h, aio_alloc_cb, recv_cb);
+  int r = uv_udp_recv_start(&handle->data, aio_alloc_cb, recv_cb);
   return r ? PN_NIL : udp;
 }
 static PN
